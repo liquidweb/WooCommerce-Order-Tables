@@ -12,11 +12,18 @@
 class WooCommerce_Custom_Orders_Table {
 
 	/**
-	 * The database table name.
+	 * The database table name for orders.
 	 *
 	 * @var string
 	 */
 	protected $table_name = null;
+
+	/**
+	 * The database table name for order meta data.
+	 *
+	 * @var string
+	 */
+	protected $meta_table_name = null;
 
 	/**
 	 * Steps to run on plugin initialization.
@@ -26,8 +33,12 @@ class WooCommerce_Custom_Orders_Table {
 	public function setup() {
 		global $wpdb;
 
-		$this->table_name = $wpdb->prefix . 'woocommerce_orders';
+		$this->table_name      = $wpdb->prefix . 'woocommerce_orders';
+		$this->meta_table_name = $wpdb->prefix . 'woocommerce_ordermeta';
 
+		// Registers 'ordermeta' table in the global wpdb object.
+		global $wpdb;
+		$wpdb->ordermeta = wc_custom_order_table()->get_meta_table_name();
 		// Use the plugin's custom data stores for customers and orders.
 		add_filter( 'woocommerce_customer_data_store', __CLASS__ . '::customer_data_store' );
 		add_filter( 'woocommerce_order_data_store', __CLASS__ . '::order_data_store' );
@@ -42,8 +53,27 @@ class WooCommerce_Custom_Orders_Table {
 		// When associating previous orders with a customer based on email, update the record.
 		add_action( 'woocommerce_update_new_customer_past_order', 'WooCommerce_Custom_Orders_Table_Filters::update_past_customer_order', 10, 2 );
 
+		// Move custom meta keys query to the ordermeta table.
+		add_action( 'get_meta_sql', 'WooCommerce_Custom_Orders_Table_Filters::get_meta_sql', 10, 6 );
+
 		// Register the table within WooCommerce.
-		add_filter( 'woocommerce_install_get_tables', array( $this, 'register_table_name' ) );
+		add_filter( 'woocommerce_install_get_tables', array( $this, 'register_tables_name' ) );
+
+		// Removes default metabox and add the ordermeta one.
+		add_action( 'add_meta_boxes_shop_order', 'WooCommerce_Custom_Orders_Table_Meta::replace_order_metabox' );
+		add_action( 'add_meta_boxes_shop_order_refund', 'WooCommerce_Custom_Orders_Table_Meta::replace_order_metabox' );
+
+		// Add save method for metadata in metabox in the edit form.
+		add_action( 'save_post_shop_order', 'WooCommerce_Custom_Orders_Table_Meta::save_order_meta_data', 10, 3 );
+
+		// Add save method for metadata in metabox in the edit form.
+		add_action( 'delete_post', 'WooCommerce_Custom_Orders_Table_Meta::delete_order_meta_data', 10 );
+
+		// Add support for ordermeta in pre-CRUD operations.
+		add_action( 'add_post_metadata', 'WooCommerce_Custom_Orders_Table_Meta::map_post_metadata', 10, 5 );
+		add_action( 'update_post_metadata', 'WooCommerce_Custom_Orders_Table_Meta::map_post_metadata', 10, 5 );
+		add_action( 'delete_post_metadata', 'WooCommerce_Custom_Orders_Table_Meta::map_post_metadata', 10, 5 );
+		add_action( 'get_post_metadata', 'WooCommerce_Custom_Orders_Table_Meta::map_post_metadata', 10, 4 );
 
 		// If we're in a WP-CLI context, load the WP-CLI command.
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
@@ -66,6 +96,20 @@ class WooCommerce_Custom_Orders_Table {
 	}
 
 	/**
+	 * Retrieve the WooCommerce ordermeta table name.
+	 *
+	 * @return string The database table name.
+	 */
+	public function get_meta_table_name() {
+		/**
+		 * Filter the WooCommerce order meta table name.
+		 *
+		 * @param string $table The WooCommerce order meta table name.
+		 */
+		return apply_filters( 'wc_customer_order_meta_table_name', $this->meta_table_name );
+	}
+
+	/**
 	 * Simple helper method to determine if a row already exists for the given order ID.
 	 *
 	 * @global $wpdb
@@ -77,6 +121,7 @@ class WooCommerce_Custom_Orders_Table {
 	public function row_exists( $order_id ) {
 		global $wpdb;
 
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		return (bool) $wpdb->get_var(
 			$wpdb->prepare(
 				'SELECT COUNT(order_id) FROM ' . esc_sql( $this->get_table_name() ) . ' WHERE order_id = %d',
@@ -153,42 +198,50 @@ class WooCommerce_Custom_Orders_Table {
 	 * @return WC_Order The populated WC_Order object.
 	 */
 	public static function populate_order_from_post_meta( $order ) {
-		foreach ( self::get_postmeta_mapping() as $column => $meta_key ) {
-			$meta = get_post_meta( $order->get_id(), $meta_key, true );
+		$meta              = get_post_meta( $order->get_id() );
+		$order_fields      = self::get_postmeta_mapping(); // Non order_fields are assumed to be order meta_data.
+		$key_to_column_map = array_flip( $order_fields );
+		$table_data        = $order->get_data_store()->get_order_data_from_table( $order );
 
-			$table_data = $order->get_data_store()->get_order_data_from_table( $order );
-			if ( empty( $table_data->$column ) && ! empty( $meta ) ) {
-				switch ( $column ) {
-					case 'billing_index':
-					case 'shipping_index':
-						break;
+		foreach ( $meta as $meta_key => $meta_value ) {
+			$meta_value = reset( $meta_value );
+			if ( in_array( $meta_key, $order_fields, true ) ) {
+				$column = $key_to_column_map[ $meta_key ];
+				if ( empty( $table_data->$column ) && ! empty( $meta_value ) ) {
+					switch ( $column ) {
+						case 'billing_index':
+						case 'shipping_index':
+							break;
 
-					/*
-					 * Migration isn't the time to validate (and potentially throw exceptions);
-					 * if it was accepted into WooCommerce core, let it persist.
-					 *
-					 * If we're unable to set an email address due to $order->set_billing_email(),
-					 * try to circumvent the check by using reflection to call the protected
-					 * $order->set_address_prop() method.
-					 */
-					case 'billing_email':
-						try {
-							$order->set_billing_email( $meta );
-						} catch ( WC_Data_Exception $e ) {
-							$method = new ReflectionMethod( $order, 'set_address_prop' );
-							$method->setAccessible( true );
-							$method->invoke( $order, 'email', 'billing', $meta );
-						}
-						break;
+						/*
+						 * Migration isn't the time to validate (and potentially throw exceptions);
+						 * if it was accepted into WooCommerce core, let it persist.
+						 *
+						 * If we're unable to set an email address due to $order->set_billing_email(),
+						 * try to circumvent the check by using reflection to call the protected
+						 * $order->set_address_prop() method.
+						 */
+						case 'billing_email':
+							try {
+								$order->set_billing_email( $meta_value );
+							} catch ( WC_Data_Exception $e ) {
+								$method = new ReflectionMethod( $order, 'set_address_prop' );
+								$method->setAccessible( true );
+								$method->invoke( $order, 'email', 'billing', $meta_value );
+							}
+							break;
 
-					case 'prices_include_tax':
-						$order->set_prices_include_tax( 'yes' === $meta );
-						break;
+						case 'prices_include_tax':
+							$order->set_prices_include_tax( 'yes' === $meta_value );
+							break;
 
-					default:
-						$order->{"set_{$column}"}( $meta );
-						break;
+						default:
+							$order->{"set_{$column}"}( $meta_value );
+							break;
+					}
 				}
+			} else {
+				$order->add_meta_data( $meta_key, $meta_value );
 			}
 		}
 
@@ -196,18 +249,23 @@ class WooCommerce_Custom_Orders_Table {
 	}
 
 	/**
-	 * Register the table name within WooCommerce.
+	 * Register the tables names within WooCommerce.
 	 *
 	 * @param array $tables An array of known WooCommerce tables.
 	 *
 	 * @return array The filtered $tables array.
 	 */
-	public function register_table_name( $tables ) {
-		$table = $this->get_table_name();
+	public function register_tables_name( $tables ) {
+		$new_tables = array(
+			$this->get_table_name(),
+			$this->get_meta_table_name(),
+		);
 
-		if ( ! in_array( $table, $tables, true ) ) {
-			$tables[] = $table;
-			sort( $tables );
+		foreach ( $new_tables as $table ) {
+			if ( ! in_array( $table, $tables, true ) ) {
+				$tables[] = $table;
+				sort( $tables );
+			}
 		}
 
 		return $tables;
@@ -243,6 +301,8 @@ class WooCommerce_Custom_Orders_Table {
 
 		// Remove the row from the custom table.
 		if ( true === $delete ) {
+
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			$wpdb->delete(
 				wc_custom_order_table()->get_table_name(),
 				array( 'order_id' => $order->get_id() ),
@@ -277,4 +337,5 @@ class WooCommerce_Custom_Orders_Table {
 	public static function order_refund_data_store() {
 		return 'WC_Order_Refund_Data_Store_Custom_Table';
 	}
+
 }
