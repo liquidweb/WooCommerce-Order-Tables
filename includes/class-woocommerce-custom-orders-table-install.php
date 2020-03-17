@@ -50,10 +50,10 @@ class WooCommerce_Custom_Orders_Table_Install {
 		// Load wp-admin/includes/upgrade.php, which defines dbDelta().
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
-		$table   = wc_custom_order_table()->get_table_name();
-		$collate = $wpdb->get_charset_collate();
-		$tables  = "
-			CREATE TABLE {$table} (
+		$table_name = WC_Order_Data_Store_Custom_Table::get_custom_table_name();
+		$collate    = $wpdb->get_charset_collate();
+		$table      = "
+			CREATE TABLE {$table_name} (
 				order_id BIGINT UNSIGNED NOT NULL COMMENT 'Order post ID',
 				order_key varchar(100) DEFAULT NULL COMMENT 'Unique order key',
 				customer_id BIGINT UNSIGNED NOT NULL COMMENT 'Customer ID. Will be 0 for guests.',
@@ -97,9 +97,10 @@ class WooCommerce_Custom_Orders_Table_Install {
 				date_completed varchar(20) DEFAULT NULL COMMENT 'Date the order was completed',
 				date_paid varchar(20) DEFAULT NULL COMMENT 'Date the order was paid',
 				cart_hash varchar(32) DEFAULT NULL COMMENT 'Hash of cart items to ensure orders are not modified',
-				amount varchar(100) DEFAULT NULL COMMENT 'The refund amount',
-				refunded_by BIGINT UNSIGNED DEFAULT NULL COMMENT 'The ID of the user who issued the refund',
+				amount varchar(100) DEFAULT NULL COMMENT 'The total amount refunded',
 				reason text DEFAULT NULL COMMENT 'The reason for the refund being issued',
+				refunded_by BIGINT UNSIGNED DEFAULT NULL COMMENT 'The ID of the user who issued the refund',
+				refunded_payment TINYINT UNSIGNED DEFAULT 0 COMMENT 'Has the payment been refunded via API?',
 			PRIMARY KEY  (order_id),
 			UNIQUE KEY `order_key` (`order_key`),
 			KEY `customer_id` (`customer_id`),
@@ -108,7 +109,7 @@ class WooCommerce_Custom_Orders_Table_Install {
 		";
 
 		// Apply the database migration.
-		dbDelta( $tables );
+		dbDelta( $table );
 
 		// Store the table version in the options table.
 		update_option( self::SCHEMA_VERSION_KEY, (int) self::$table_version, false );

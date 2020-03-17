@@ -6,14 +6,10 @@
  * @author  Liquid Web
  */
 
+/**
+ * @group Core
+ */
 class CoreTest extends TestCase {
-
-	public function test_order_row_exists() {
-		$order = WC_Helper_Order::create_order();
-
-		$this->assertTrue( wc_custom_order_table()->row_exists( $order->get_id() ) );
-		$this->assertFalse( wc_custom_order_table()->row_exists( $order->get_id() + 1 ) );
-	}
 
 	/**
 	 * @ticket https://github.com/liquidweb/woocommerce-custom-orders-table/issues/98
@@ -31,6 +27,31 @@ class CoreTest extends TestCase {
 			$order->get_billing_email(),
 			'Don\'t let an invalid email address cause a migration failure.'
 		);
+	}
+
+	/**
+	 * @test
+	 */
+	public function custom_tables_are_registered_within_WooCommerce() {
+		wc_custom_order_table()->setup();
+
+		$known_tables = WC_Install::get_tables();
+
+		$this->assertContains( WC_Order_Data_Store_Custom_Table::get_custom_table_name(), $known_tables );
+		$this->assertContains( WC_Order_Refund_Data_Store_Custom_Table::get_custom_table_name(), $known_tables );
+	}
+
+	/**
+	 * @test
+	 * @testdox The results of register_table_names() should be sorted
+	 */
+	public function the_results_of_register_table_names_should_be_sorted() {
+		wc_custom_order_table()->setup();
+
+		$unsorted = $sorted = WC_Install::get_tables();
+		sort( $sorted );
+
+		$this->assertSame( $sorted, $unsorted );
 	}
 
 	public function test_migrate_to_post_meta() {

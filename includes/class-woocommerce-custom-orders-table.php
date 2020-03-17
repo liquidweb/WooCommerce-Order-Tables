@@ -12,22 +12,9 @@
 class WooCommerce_Custom_Orders_Table {
 
 	/**
-	 * The database table name.
-	 *
-	 * @var string
-	 */
-	protected $table_name = null;
-
-	/**
 	 * Steps to run on plugin initialization.
-	 *
-	 * @global $wpdb
 	 */
 	public function setup() {
-		global $wpdb;
-
-		$this->table_name = $wpdb->prefix . 'woocommerce_orders';
-
 		// Use the plugin's custom data stores for customers and orders.
 		add_filter( 'woocommerce_customer_data_store', __CLASS__ . '::customer_data_store' );
 		add_filter( 'woocommerce_order_data_store', __CLASS__ . '::order_data_store' );
@@ -45,7 +32,7 @@ class WooCommerce_Custom_Orders_Table {
 		WC_Customer_Data_Store_Custom_Table::add_hooks();
 
 		// Register the table within WooCommerce.
-		add_filter( 'woocommerce_install_get_tables', array( $this, 'register_table_name' ) );
+		add_filter( 'woocommerce_install_get_tables', array( $this, 'register_table_names' ) );
 
 		// If we're in a WP-CLI context, load the WP-CLI command.
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
@@ -58,39 +45,16 @@ class WooCommerce_Custom_Orders_Table {
 	 *
 	 * @return string The database table name.
 	 */
-	public function get_table_name() {
-		/**
-		 * Filter the WooCommerce orders table name.
-		 *
-		 * @param string $table The WooCommerce orders table name.
-		 */
-		return apply_filters( 'wc_customer_order_table_name', $this->table_name );
-	}
-
-	/**
-	 * Simple helper method to determine if a row already exists for the given order ID.
-	 *
-	 * @global $wpdb
-	 *
-	 * @param int $order_id The order ID.
-	 *
-	 * @return bool Whether or not a row already exists for this order ID.
-	 */
-	public function row_exists( $order_id ) {
-		global $wpdb;
-
-		return (bool) $wpdb->get_var(
-			$wpdb->prepare(
-				'SELECT COUNT(order_id) FROM ' . esc_sql( $this->get_table_name() ) . ' WHERE order_id = %d',
-				$order_id
-			)
-		);
+	public function get_orders_table_name() {
+		return WC_Order_Data_Store_Custom_Table::get_custom_table_name();
 	}
 
 	/**
 	 * Retrieve the database table column => post_meta mapping.
 	 *
 	 * @return array An array of database columns and their corresponding post_meta keys.
+	 *
+	 * @todo Remove this in favor of UsesCustomTable::map_columns_to_post_meta_keys()
 	 */
 	public static function get_postmeta_mapping() {
 		return array(
@@ -200,17 +164,17 @@ class WooCommerce_Custom_Orders_Table {
 	}
 
 	/**
-	 * Register the table name within WooCommerce.
+	 * Register the table names within WooCommerce.
 	 *
 	 * @param array $tables An array of known WooCommerce tables.
 	 *
 	 * @return array The filtered $tables array.
 	 */
-	public function register_table_name( $tables ) {
-		$table = $this->get_table_name();
+	public function register_table_names( $tables ) {
+		$orders_table = WC_Order_Data_Store_Custom_Table::get_custom_table_name();
 
-		if ( ! in_array( $table, $tables, true ) ) {
-			$tables[] = $table;
+		if ( ! in_array( $orders_table, $tables, true ) ) {
+			$tables[] = $orders_table;
 			sort( $tables );
 		}
 
@@ -248,7 +212,7 @@ class WooCommerce_Custom_Orders_Table {
 		// Remove the row from the custom table.
 		if ( true === $delete ) {
 			$wpdb->delete(
-				wc_custom_order_table()->get_table_name(),
+				wc_custom_order_table()->get_orders_table_name(),
 				array( 'order_id' => $order->get_id() ),
 				array( '%d' )
 			);

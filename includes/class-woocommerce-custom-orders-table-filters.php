@@ -53,7 +53,11 @@ class WooCommerce_Custom_Orders_Table_Filters {
 				}
 
 				if ( isset( $meta_query['key'] ) ) {
-					$column = array_search( $meta_query['key'], WooCommerce_Custom_Orders_Table::get_postmeta_mapping(), true );
+					$column = array_search(
+						$meta_query['key'],
+						WC_Order_Data_Store_Custom_Table::map_columns_to_post_meta_keys(),
+						true
+					);
 
 					if ( $column ) {
 						$query_args['wc_order_meta_query'][] = array_merge(
@@ -104,7 +108,7 @@ class WooCommerce_Custom_Orders_Table_Filters {
 			$join = preg_replace( $regex, '', $join );
 		}
 
-		$table = esc_sql( wc_custom_order_table()->get_table_name() );
+		$table = esc_sql( wc_custom_order_table()->get_orders_table_name() );
 		$join .= " LEFT JOIN {$table} ON ( {$wpdb->posts}.ID = {$table}.order_id ) ";
 
 		// Don't necessarily apply this to subsequent posts_join filter callbacks.
@@ -128,7 +132,7 @@ class WooCommerce_Custom_Orders_Table_Filters {
 		global $wpdb;
 
 		$meta_query = $wp_query->get( 'wc_order_meta_query' );
-		$table      = esc_sql( wc_custom_order_table()->get_table_name() );
+		$table      = esc_sql( wc_custom_order_table()->get_orders_table_name() );
 
 		if ( empty( $meta_query ) ) {
 			return $where;
@@ -183,12 +187,12 @@ class WooCommerce_Custom_Orders_Table_Filters {
 		 *
 		 * These will take the form of 'meta_{key}.meta_value' => 'meta_{key}.{table_column}'.
 		 */
-		$mapping      = WooCommerce_Custom_Orders_Table::get_postmeta_mapping();
+		$mapping      = WC_Order_Data_Store_Custom_Table::map_columns_to_post_meta_keys();
 		$joins        = array(
 			'post_id'     => false,
 			'post_parent' => false,
 		);
-		$table        = esc_sql( wc_custom_order_table()->get_table_name() );
+		$table        = esc_sql( wc_custom_order_table()->get_orders_table_name() );
 		$replacements = array();
 
 		foreach ( $matches[0] as $key => $value ) {
@@ -246,7 +250,7 @@ class WooCommerce_Custom_Orders_Table_Filters {
 			return;
 		}
 
-		$table = wc_custom_order_table()->get_table_name();
+		$table = wc_custom_order_table()->get_orders_table_name();
 
 		$wpdb->query(
 			'UPDATE ' . esc_sql( $table ) . "

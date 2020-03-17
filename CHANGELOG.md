@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-**Note:** Based on [our compatibility policy](CONTRIBUTING.md#compatibility-policy), this plugin now requires WooCommerce 3.7 or higher. As such, PHP 5.6 or newer is also required.
+### Breaking Changes
+
+* The "wc_customer_order_table_name" filter has been renamed to "wc_custom_orders_table_name" ([#159]).
+* `wc_custom_order_table()->get_table_name()` has been renamed to `wc_custom_order_table()->get_orders_table_name()`.
+* Based on [our compatibility policy](CONTRIBUTING.md#compatibility-policy), this plugin now requires WooCommerce 3.7 or higher. As such, PHP 5.6 or newer is also required.
 
 ### Added
 
@@ -137,4 +141,5 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 [#152]: https://github.com/liquidweb/woocommerce-custom-orders-table/pull/152
 [#154]: https://github.com/liquidweb/woocommerce-custom-orders-table/pull/154
 [#157]: https://github.com/liquidweb/woocommerce-custom-orders-table/pull/157
+[#159]: https://github.com/liquidweb/woocommerce-custom-orders-table/pull/159
 [#164]: https://github.com/liquidweb/woocommerce-custom-orders-table/pull/164

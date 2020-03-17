@@ -6,6 +6,8 @@
  * @author  Liquid Web
  */
 
+use LiquidWeb\WooCommerceCustomOrdersTable\Concerns\UsesCustomTable;
+
 /**
  * Extend the WC_Order_Data_Store_CPT class, overloading methods that require database access in
  * order to use the new table.
@@ -13,6 +15,7 @@
  * Orders are still treated as posts within WordPress, but the meta is stored in a separate table.
  */
 class WC_Order_Data_Store_Custom_Table extends WC_Order_Data_Store_CPT {
+	use UsesCustomTable;
 
 	/**
 	 * Hook into WooCommerce database queries related to orders.
@@ -26,95 +29,13 @@ class WC_Order_Data_Store_Custom_Table extends WC_Order_Data_Store_CPT {
 	/**
 	 * Delete an order from the database.
 	 *
-	 * @global $wpdb
-	 *
 	 * @param WC_Order $order The order object, passed by reference.
 	 * @param array    $args  Additional arguments to pass to the delete method.
 	 */
 	public function delete( &$order, $args = array() ) {
-		global $wpdb;
-
-		$order_id = $order->get_id();
+		add_action( 'woocommerce_delete_order', [ $this, 'delete_row' ] );
 
 		parent::delete( $order, $args );
-
-		// Delete the database row if force_delete is true.
-		if ( isset( $args['force_delete'] ) && $args['force_delete'] ) {
-			$wpdb->delete(
-				wc_custom_order_table()->get_table_name(),
-				array(
-					'order_id' => $order_id,
-				)
-			);
-		}
-	}
-
-	/**
-	 * Read order data from the custom orders table.
-	 *
-	 * If the order does not yet exist, the plugin will attempt to migrate it automatically. This
-	 * behavior can be modified via the "wc_custom_order_table_automatic_migration" filter.
-	 *
-	 * @param WC_Order $order       The order object, passed by reference.
-	 * @param object   $post_object The post object.
-	 */
-	protected function read_order_data( &$order, $post_object ) {
-		$data = $this->get_order_data_from_table( $order );
-
-		if ( ! empty( $data ) ) {
-			$order->set_props( $data );
-		} else {
-			/**
-			 * Toggle the ability for WooCommerce Custom Orders Table to automatically migrate orders.
-			 *
-			 * @param bool $migrate Whether or not orders should automatically be migrated once they
-			 *                      have been loaded.
-			 */
-			$migrate = apply_filters( 'wc_custom_order_table_automatic_migration', true );
-
-			if ( $migrate ) {
-				$this->populate_from_meta( $order );
-			}
-		}
-	}
-
-	/**
-	 * Retrieve a single order from the database.
-	 *
-	 * @global $wpdb
-	 *
-	 * @param WC_Order $order The order object.
-	 *
-	 * @return array The order row, as an associative array.
-	 */
-	public function get_order_data_from_table( $order ) {
-		global $wpdb;
-
-		$table = wc_custom_order_table()->get_table_name();
-		$data  = (array) $wpdb->get_row(
-			$wpdb->prepare(
-				'SELECT * FROM ' . esc_sql( $table ) . ' WHERE order_id = %d LIMIT 1',
-				$order->get_id()
-			),
-			ARRAY_A
-		);
-
-		// Return early if there's no matching row in the orders table.
-		if ( empty( $data ) ) {
-			return array();
-		}
-
-		$post = get_post( $order->get_id() );
-
-		// Expand anything that might need assistance.
-		if ( isset( $data['prices_include_tax'] ) ) {
-			$data['prices_include_tax'] = wc_string_to_bool( $data['prices_include_tax'] );
-		}
-
-		// Append additional data.
-		$data['customer_note'] = $post->post_excerpt;
-
-		return $data;
 	}
 
 	/**
@@ -128,7 +49,7 @@ class WC_Order_Data_Store_Custom_Table extends WC_Order_Data_Store_CPT {
 	protected function update_post_meta( &$order ) {
 		global $wpdb;
 
-		$table      = wc_custom_order_table()->get_table_name();
+		$table      = self::get_custom_table_name();
 		$changes    = array();
 		$order_key  = $order->get_order_key( 'edit' );
 		$order_data = array(
@@ -189,7 +110,7 @@ class WC_Order_Data_Store_Custom_Table extends WC_Order_Data_Store_CPT {
 		}
 
 		// Insert or update the database record.
-		if ( ! wc_custom_order_table()->row_exists( $order_data['order_id'] ) ) {
+		if ( ! $this->row_exists( $order_data['order_id'] ) ) {
 			$inserted = $wpdb->insert( $table, $order_data ); // WPCS: DB call OK.
 
 			if ( 1 !== $inserted ) {
@@ -253,9 +174,9 @@ class WC_Order_Data_Store_Custom_Table extends WC_Order_Data_Store_CPT {
 
 		$total = $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT SUM(o.amount) FROM ' . esc_sql( wc_custom_order_table()->get_table_name() ) . " AS o
+				'SELECT SUM(r.amount) FROM ' . esc_sql( self::get_custom_table_name() ) . " AS r
 				INNER JOIN $wpdb->posts AS p ON ( p.post_type = 'shop_order_refund' AND p.post_parent = %d )
-				WHERE o.order_id = p.ID",
+				WHERE r.order_id = p.ID",
 				$order->get_id()
 			)
 		);
@@ -273,11 +194,9 @@ class WC_Order_Data_Store_Custom_Table extends WC_Order_Data_Store_CPT {
 	public function get_order_id_by_order_key( $order_key ) {
 		global $wpdb;
 
-		$table = wc_custom_order_table()->get_table_name();
-
 		return $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT order_id FROM ' . esc_sql( $table ) . ' WHERE order_key = %s',
+				'SELECT order_id FROM ' . esc_sql( self::get_custom_table_name() ) . ' WHERE order_key = %s',
 				$order_key
 			)
 		);
@@ -322,10 +241,10 @@ class WC_Order_Data_Store_Custom_Table extends WC_Order_Data_Store_CPT {
 
 		// Search for order meta fields.
 		if ( ! empty( $search_fields ) ) {
-			$mapping   = WooCommerce_Custom_Orders_Table::get_postmeta_mapping();
+			$mapping   = self::map_columns_to_post_meta_keys();
 			$in_table  = array_intersect( $search_fields, $mapping );
 			$meta_keys = array_diff( $search_fields, $in_table );
-			$table     = wc_custom_order_table()->get_table_name();
+			$table     = self::get_custom_table_name();
 
 			// Find results based on search fields that map to table columns.
 			if ( ! empty( $in_table ) ) {
@@ -389,41 +308,6 @@ class WC_Order_Data_Store_Custom_Table extends WC_Order_Data_Store_CPT {
 	}
 
 	/**
-	 * Populate custom table with data from postmeta, for migrations.
-	 *
-	 * @global $wpdb
-	 *
-	 * @param WC_Order $order  The order object, passed by reference.
-	 * @param bool     $delete Optional. Whether or not the post meta should be deleted. Default
-	 *                         is false.
-	 *
-	 * @return WP_Error|null A WP_Error object if there was a problem populating the order, or null
-	 *                       if there were no issues.
-	 */
-	public function populate_from_meta( &$order, $delete = false ) {
-		global $wpdb;
-
-		try {
-			$table_data = $this->get_order_data_from_table( $order );
-			$order      = WooCommerce_Custom_Orders_Table::populate_order_from_post_meta( $order );
-
-			$this->update_post_meta( $order );
-		} catch ( WC_Data_Exception $e ) {
-			return new WP_Error( 'woocommerce-custom-order-table-migration', $e->getMessage() );
-		}
-
-		if ( $wpdb->last_error ) {
-			return new WP_Error( 'woocommerce-custom-order-table-migration', $wpdb->last_error );
-		}
-
-		if ( true === $delete ) {
-			foreach ( WooCommerce_Custom_Orders_Table::get_postmeta_mapping() as $column => $meta_key ) {
-				delete_post_meta( $order->get_id(), $meta_key );
-			}
-		}
-	}
-
-	/**
 	 * Populate order postmeta from a custom table, for rolling back.
 	 *
 	 * @param WC_Order $order The order object, passed by reference.
@@ -439,7 +323,7 @@ class WC_Order_Data_Store_Custom_Table extends WC_Order_Data_Store_CPT {
 			$data['prices_include_tax'] = wc_bool_to_string( $data['prices_include_tax'] );
 		}
 
-		foreach ( WooCommerce_Custom_Orders_Table::get_postmeta_mapping() as $column => $meta_key ) {
+		foreach ( self::map_columns_to_post_meta_keys() as $column => $meta_key ) {
 			if ( isset( $data[ $column ] ) ) {
 				update_post_meta( $order->get_id(), $meta_key, $data[ $column ] );
 			}
